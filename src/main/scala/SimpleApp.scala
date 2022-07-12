@@ -6,7 +6,7 @@ import org.apache.spark.SparkContext
 
 object SimpleApp {
   def main(args: Array[String]) {
-    val logFile = "/home/whit/spark-3.2.1-bin-hadoop3.2-scala2.13/README.md" // Should be some file on your system
+    val logFile = "/home/whit/spark-3.2.1-bin-hadoop3.2-scala2.13/README.md"
     val spark = SparkSession.builder.appName("Simple Application").getOrCreate()
     val logData = spark.read.textFile(logFile).cache()
     val numAs = logData.filter(line => line.contains("a")).count()
@@ -28,9 +28,23 @@ object SimpleApp {
     
     val partdata = rdddata.partitionBy(partitioner)
     
-    // println("partitions: " + partdata.collect().toList)
-    //println(partdata.zipWithIndex())
     partdata.glom().collect().foreach(a => {a.foreach(println);println("=====")})
+    
+    // map example
+    
+    val newpartdata = partdata.map(f=> (f._1,f._2 + 1))
+    newpartdata.glom().collect().foreach(a => {a.foreach(println);println("=====")})
+    
+    // Reduce examples
+    
+    // Min
+     println("Min : "+partdata.reduce( (a,b)=> (1 ,a._2 min b._2))._2)
+    
+    // Max
+    println("output max : "+partdata.reduce( (a,b)=> (1 ,a._2 max b._2))._2)
+    
+    // Sum
+    println("output sum : "+partdata.reduce( (a,b)=> (1 ,a._2 + b._2))._2)
     
     spark.stop()
   }
