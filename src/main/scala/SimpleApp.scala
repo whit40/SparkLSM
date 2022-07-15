@@ -41,10 +41,27 @@ object SimpleApp {
      println("Min : "+partdata.reduce( (a,b)=> (1 ,a._2 min b._2))._2)
     
     // Max
-    println("output max : "+partdata.reduce( (a,b)=> (1 ,a._2 max b._2))._2)
+    println("output max : "+ partdata.reduce( (a,b)=> (1 ,a._2 max b._2))._2)
     
     // Sum
-    println("output sum : "+partdata.reduce( (a,b)=> (1 ,a._2 + b._2))._2)
+    println("output sum : "+ partdata.reduce( (a,b)=> (1 ,a._2 + b._2))._2)
+    
+    // Use mappartitions to build level 1 index
+    val index = partdata.mapPartitions(x=> (List(x.next._1).iterator)).collect
+    index.foreach(println)
+    
+    // Use level 1 to get partition
+    val searchNum :Int = 12
+    var partNum :Int = 0;
+    for (b <- index) {
+    	if (searchNum >= b){
+    		partNum = partNum + 1 
+    	}
+    }
+    println("Value " + searchNum + " should be in partition: " + partNum)
+    
+    // Use partitionpruningRDD to query second level of index
+    
     
     spark.stop()
   }
