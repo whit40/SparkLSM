@@ -5,6 +5,25 @@ import org.apache.spark.rdd
 import org.apache.spark.SparkContext
 
 object SimpleApp {
+
+  def partFilter(a:Tuple2(Int, Int)) : Int = {
+    
+  }
+  
+  // Insert function here
+  
+  // Delete function here (?)
+  
+  // Merge function here
+  
+  // Update function here
+  
+  // Function to build index?
+  
+  // Search function here
+  
+  
+  
   def main(args: Array[String]) {
     val logFile = "/home/whit/spark-3.2.1-bin-hadoop3.2-scala2.13/README.md"
     val spark = SparkSession.builder.appName("Simple Application").getOrCreate()
@@ -61,7 +80,7 @@ object SimpleApp {
     println("Value " + searchNum + " should be in partition: " + partNum)
     
     // Use partitionpruningRDD to query second level of index
-    
+    // val prunedRDD = PartitionPruningRDD(partData, )
     
     spark.stop()
   }
