@@ -46,11 +46,11 @@ object SimpleApp {
   }
   
   
-  // Update function here (~10 lines)
+  // Update function here
   
   // Function to build index?
   
-  // Search function here
+  // Search function here (~10 lines)
   
   
   
@@ -88,14 +88,16 @@ object SimpleApp {
     
     println("Try inserting into rdd")
     var ret = modifyLSM(Seq((21,80)), true)
-    ret = modifyLSM(Seq((22,90)), true)
+    ret = modifyLSM(Seq((18,-1)), true)
     ret = modifyLSM(Seq((23,10)), true)
     ret = modifyLSM(Seq((24,20)), true)
+    ret = modifyLSM(Seq((25,50)), true)
     println("Level 1 is: ")
     level1.glom().collect().foreach(a => {a.foreach(println);println("=====")})
     println("Level 2 is: ")
     level2.glom().collect().foreach(a => {a.foreach(println);println("=====")})
     
+    println("vals for 18 are: " +  level2.lookup(18))
     // map example
     
     //val newpartdata = partdata.map(f=> (f._1,f._2 + 1))
