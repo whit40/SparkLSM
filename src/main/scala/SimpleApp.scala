@@ -55,10 +55,18 @@ object SimpleApp {
   
   
   // Update function here
+  def update(value: Seq[Tuple2[Int, Int]]) : Boolean = {
+    modifyLSM(Seq((value(0)._1, -1)))
+    modifyLSM(value)
+    return true
+  }
   
   // Function to build index?
   
   // Search function here (~10 lines)
+  def search(key: Int) : Seq[Int] = {
+    return level2.lookup(key)
+  } 
   
   
   
@@ -96,11 +104,11 @@ object SimpleApp {
     level1.glom().collect().foreach(a => {a.foreach(println);println("=====")})
     
     println("Try inserting into rdd")
-    var ret = modifyLSM(Seq((21,80)))
-    ret = modifyLSM(Seq((18,-1)))
-    ret = modifyLSM(Seq((18,20)))
-    ret = modifyLSM(Seq((18,-1)))
-    ret = modifyLSM(Seq((25,50)))
+    modifyLSM(Seq((21,80)))
+    modifyLSM(Seq((18,-1)))
+    modifyLSM(Seq((18,20)))
+    modifyLSM(Seq((18,-1)))
+    modifyLSM(Seq((25,50)))
     println("Level 1 is: ")
     level1.glom().collect().foreach(a => {a.foreach(println);println("=====")})
     println("Level 2 is: ")
@@ -150,6 +158,46 @@ object SimpleApp {
     
     // )RDD[Array(Int)]
     
+    level2.glom().collect().foreach(a => {a.foreach(println);println("=====")})
+    
+    // Clear everything before next example
+    level1 = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
+    level2 = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
+    
+    // Example 2
+    println("Start Example 2")
+    level1 = spark.sparkContext.parallelize(data)
+    //val partitioner = new RangePartitioner(6, level1)
+    level1 = level1.partitionBy(partitioner)
+    
+    // Inserts and deletes here
+    modifyLSM(Seq((9,-1)))
+    modifyLSM(Seq((10,-1)))
+    modifyLSM(Seq((1,-1)))
+    modifyLSM(Seq((11,-1)))
+    modifyLSM(Seq((12,-1)))
+    
+    println("Level 1 is: ")
+    level1.glom().collect().foreach(a => {a.foreach(println);println("=====")})
+    println("Level 2 is: ")
+    level2.glom().collect().foreach(a => {a.foreach(println);println("=====")})
+    
+    // Clear everything before next example
+    level1 = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
+    level2 = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
+    
+    // Example 3
+    
+    level1 = spark.sparkContext.parallelize(data)
+    //val partitioner = new RangePartitioner(6, level1)
+    level1 = level1.partitionBy(partitioner)
+    
+    // Inserts and deletes here
+    
+    
+    println("Level 1 is: ")
+    level1.glom().collect().foreach(a => {a.foreach(println);println("=====")})
+    println("Level 2 is: ")
     level2.glom().collect().foreach(a => {a.foreach(println);println("=====")})
     
     spark.stop()
