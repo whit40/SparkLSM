@@ -14,7 +14,7 @@ object SimpleApp {
   //}
   
   // Insert/Delete function here (~5 lines)
-  def modifyLSM(value: Seq[Tuple2[Int, Int]], ins: Boolean) : Boolean = {
+  def modifyLSM(value: Seq[Tuple2[Int, Int]]) : Boolean = {
     val spark = SparkSession.builder().getOrCreate()
     // make insert value an RDD, adjust for ins/del?
     val valueRDD = spark.sparkContext.parallelize(value)
@@ -42,6 +42,14 @@ object SimpleApp {
     level1 = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
     
     // use tombstones to remove appropriate vals
+    level2 = level2.reduceByKey((v1, v2) => v2)
+    
+    level2 = level2.filter(a => a._2 != -1)
+    level2 = level2.sortByKey()
+    val partitioner1 = new RangePartitioner(6, level2)
+    level2 = level2.partitionBy(partitioner1)
+    
+    
     return
   }
   
@@ -57,6 +65,7 @@ object SimpleApp {
   def main(args: Array[String]) {
     val logFile = "/home/whit/spark-3.2.1-bin-hadoop3.2-scala2.13/README.md"
     val spark = SparkSession.builder.appName("Simple Application").getOrCreate()
+    spark.sparkContext.setLogLevel("ERROR")
     val logData = spark.read.textFile(logFile).cache()
     val numAs = logData.filter(line => line.contains("a")).count()
     val numBs = logData.filter(line => line.contains("b")).count()
@@ -70,7 +79,7 @@ object SimpleApp {
     )
     */
     val data = Seq((2,10),(1,10), (3,10),(4,20),(5,10),
-    (6,30),(7,50),(8,50),(9,50),(10,30),
+    (6,30),(7,50),(9,50),(10,30),
     (11,10),(12,10),(13,40),(14,40),(15,40),
     (16,40),(17,50),(18,10),(19,40),(20,40)
     )
@@ -87,11 +96,11 @@ object SimpleApp {
     level1.glom().collect().foreach(a => {a.foreach(println);println("=====")})
     
     println("Try inserting into rdd")
-    var ret = modifyLSM(Seq((21,80)), true)
-    ret = modifyLSM(Seq((18,-1)), true)
-    ret = modifyLSM(Seq((23,10)), true)
-    ret = modifyLSM(Seq((24,20)), true)
-    ret = modifyLSM(Seq((25,50)), true)
+    var ret = modifyLSM(Seq((21,80)))
+    ret = modifyLSM(Seq((18,-1)))
+    ret = modifyLSM(Seq((18,20)))
+    ret = modifyLSM(Seq((18,-1)))
+    ret = modifyLSM(Seq((25,50)))
     println("Level 1 is: ")
     level1.glom().collect().foreach(a => {a.foreach(println);println("=====")})
     println("Level 2 is: ")
@@ -141,8 +150,7 @@ object SimpleApp {
     
     // )RDD[Array(Int)]
     
-    // Use partitionpruningRDD to query second level of index
-    // val prunedRDD = PartitionPruningRDD(partData, )
+    level2.glom().collect().foreach(a => {a.foreach(println);println("=====")})
     
     spark.stop()
   }
