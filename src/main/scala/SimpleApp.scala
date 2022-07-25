@@ -3,6 +3,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.RangePartitioner
 import org.apache.spark.rdd._
 import org.apache.spark.SparkContext
+import scala.io.Source
 
 object SimpleApp {
   val spark1 = SparkSession.builder().getOrCreate()
@@ -81,7 +82,6 @@ object SimpleApp {
     levelArray(levelId1) = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
     
     // use tombstones to remove appropriate vals
-    //levelArray(levelId2) = levelArray(levelId2).reduceByKey((v1, v2) => v2)
     levelArray(levelId2) = levelArray(levelId2).reduceByKey(tomestoneCalc)
     
     levelArray(levelId2) = levelArray(levelId2).filter(a => a._2 != -2)
@@ -140,7 +140,7 @@ object SimpleApp {
     (16,40),(17,50),(18,10),(19,40),(20,40)
     )
     
-    level1 = spark.sparkContext.parallelize(data)
+    //level1 = spark.sparkContext.parallelize(data)
     val partitioner = new RangePartitioner(6, level1)
     
     println("Partitioner has this many partitions: " + partitioner.numPartitions)
@@ -151,7 +151,16 @@ object SimpleApp {
     
     //level1.glom().collect().foreach(a => {a.foreach(println);println("=====")})
     
+    val initPath = "/home/whit/spark-3.1.3-bin-hadoop3.2/simple_ex/src/main/initialstate.txt"
+    println("printing input")
+    for (line <- Source.fromFile(initPath).getLines){
+      val splitTuple = line.split(",")
+      modifyLSM((splitTuple(0).toInt, splitTuple(1).toInt))
+      println(line)
+    }
+    
     println("Try inserting into rdd")
+    /*
     modifyLSM((8,20))
     modifyLSM((1,10))
     modifyLSM((2,30))
@@ -166,6 +175,7 @@ object SimpleApp {
     modifyLSM((20,20))
     modifyLSM((10,30))
     update((10, 20))
+    */
     println("Level 0 (memtable) is: ")
     println(level0.mkString(" "))
     println("Level 1 is: ")
