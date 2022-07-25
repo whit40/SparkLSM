@@ -6,57 +6,103 @@ import org.apache.spark.SparkContext
 
 object SimpleApp {
   val spark1 = SparkSession.builder().getOrCreate()
-  val maxSize = 22
+  
+  // Parameters
+  val maxSize = 2
+  val levelCount = 3
+  val numPartitions = 2
+  
+  var level0 = scala.collection.mutable.ArrayBuffer.empty[Tuple2[Int,Int]]
+  val levelArray = scala.collection.mutable.ArrayBuffer.empty[RDD[Tuple2[Int,Int]]]
+  
+  for (l <- 0 to levelCount){
+    println("blah")
+    levelArray += spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
+  
+  }
   var level1 = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
   var level2 = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
+  
   //def partFilter(a:Tuple2(Int, Int)) : Int = {
     
   //}
   
   // Insert/Delete function here (~5 lines)
-  def modifyLSM(value: Seq[Tuple2[Int, Int]]) : Boolean = {
+  def modifyLSM(value: Tuple2[Int, Int]) : Boolean = {
     val spark = SparkSession.builder().getOrCreate()
-    // make insert value an RDD, adjust for ins/del?
-    val valueRDD = spark.sparkContext.parallelize(value)
+    // Insert value into memtable (level0)
+    level0 += value
+    
+    //val valueRDD = spark.sparkContext.parallelize(value)
     // Union them and repartition
-    level1 = level1 ++ valueRDD
-    level1 = level1.sortByKey()
-    val partitioner = new RangePartitioner(6, level1)
-    level1 = level1.partitionBy(partitioner)
+    //level1 = level1 ++ valueRDD
+    //level1 = level1.sortByKey()
+    //val partitioner = new RangePartitioner(6, level1)
+    //level1 = level1.partitionBy(partitioner)
     // Check if we need to merge and merge if needed
-    if (level1.count() > maxSize){
+    if (level0.length > maxSize){
       // Call merge
       println("call merge")
-      merge()
+      merge(0,1)
     } else {
-      println("no merge needed, size is: " + level1.count())
+      println("no merge needed, size is: " + level0.length)
     }
     return true
   }
   
+  def tomestoneCalc(v1: Int, v2:Int) : Int = {
+    if (v1 == v2){
+      // 1 element in the RDD, dont remove it (not cancelling anything out)
+      return v1
+    }
+    
+    if (v1 == -1 || v2 == -1) {
+      // need to cancel out, return key removal code (-2)  
+      return -2
+    } else {
+      // otherwise take most recent one
+      return v2
+    }
+  }
+  
   // Merge function here (~10 lines)
-  def merge() : Unit = {
-    // Merge level1 and level2
-    level2 = level1 ++ level2
-    level2 = level2.sortByKey()
-    level1 = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
+  def merge(levelId1: Int, levelId2: Int) : Unit = {
+    println("merging levels "+ levelId1 + " and "+ levelId2)
+    // Convert memtable to RDD if necessary
+    if (levelId1 == 0){
+      levelArray(0) = spark1.sparkContext.parallelize(level0)
+      // reset memtable
+      level0 = scala.collection.mutable.ArrayBuffer.empty[Tuple2[Int,Int]]
+    }
+    
+    // Merge levels with the parameter Ids
+    levelArray(levelId2) = levelArray(levelId1) ++ levelArray(levelId2)
+    levelArray(levelId2) = levelArray(levelId2).sortByKey()
+    levelArray(levelId1) = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
     
     // use tombstones to remove appropriate vals
-    level2 = level2.reduceByKey((v1, v2) => v2)
+    //levelArray(levelId2) = levelArray(levelId2).reduceByKey((v1, v2) => v2)
+    levelArray(levelId2) = levelArray(levelId2).reduceByKey(tomestoneCalc)
     
-    level2 = level2.filter(a => a._2 != -1)
-    level2 = level2.sortByKey()
-    val partitioner1 = new RangePartitioner(6, level2)
-    level2 = level2.partitionBy(partitioner1)
+    levelArray(levelId2) = levelArray(levelId2).filter(a => a._2 != -2)
+    levelArray(levelId2) = levelArray(levelId2).sortByKey()
+    val partitioner1 = new RangePartitioner(numPartitions, levelArray(levelId2))
+    levelArray(levelId2) = levelArray(levelId2).partitionBy(partitioner1)
     
+    if (levelArray(levelId2).count > (maxSize*levelId2*2)){
+      
+      if (levelId2 < levelCount){
+        merge(levelId2, levelId2+1)
+      }
+    }
     
     return
   }
   
   
   // Update function here
-  def update(value: Seq[Tuple2[Int, Int]]) : Boolean = {
-    modifyLSM(Seq((value(0)._1, -1)))
+  def update(value: Tuple2[Int, Int]) : Boolean = {
+    modifyLSM((value._1, -1))
     modifyLSM(value)
     return true
   }
@@ -101,37 +147,35 @@ object SimpleApp {
     
     println("Get partition with key 1: " + partitioner.getPartition(1))
     
-    level1 = level1.partitionBy(partitioner)
+    //level1 = level1.partitionBy(partitioner)
     
-    level1.glom().collect().foreach(a => {a.foreach(println);println("=====")})
+    //level1.glom().collect().foreach(a => {a.foreach(println);println("=====")})
     
     println("Try inserting into rdd")
-    modifyLSM(Seq((21,80)))
-    modifyLSM(Seq((18,-1)))
-    modifyLSM(Seq((18,20)))
-    modifyLSM(Seq((18,-1)))
-    modifyLSM(Seq((25,50)))
+    modifyLSM((8,20))
+    modifyLSM((1,10))
+    modifyLSM((2,30))
+    modifyLSM((4,40))
+    modifyLSM((25,50))
+    modifyLSM((24,70))
+    modifyLSM((30,90))
+    modifyLSM((1,-1))
+    modifyLSM((24,-1))
+    modifyLSM((8,-1))
+    modifyLSM((4,-1))
+    modifyLSM((20,20))
+    modifyLSM((10,30))
+    update((10, 20))
+    println("Level 0 (memtable) is: ")
+    println(level0.mkString(" "))
     println("Level 1 is: ")
-    level1.glom().collect().foreach(a => {a.foreach(println);println("=====")})
+    println(levelArray(1).glom().collect().foreach(a => {a.foreach(println);println("=====")}))
     println("Level 2 is: ")
-    level2.glom().collect().foreach(a => {a.foreach(println);println("=====")})
+    println(levelArray(2).glom().collect().foreach(a => {a.foreach(println);println("=====")}))
+    println("Level 3 is: ")
+    println(levelArray(3).glom().collect().foreach(a => {a.foreach(println);println("=====")}))
     
-    println("vals for 18 are: " +  level2.lookup(18))
-    // map example
-    
-    //val newpartdata = partdata.map(f=> (f._1,f._2 + 1))
-    //newpartdata.glom().collect().foreach(a => {a.foreach(println);println("=====")})
-    
-    // Reduce examples
-    
-    // Min
-    //println("Min : "+partdata.reduce( (a,b)=> (1 ,a._2 min b._2))._2)
-    
-    // Max
-    //println("output max : "+ partdata.reduce( (a,b)=> (1 ,a._2 max b._2))._2)
-    
-    // Sum
-    //println("output sum : "+ partdata.reduce( (a,b)=> (1 ,a._2 + b._2))._2)
+    //println("vals for 18 are: " +  level2.lookup(18))
     
     // Use mappartitions to build level 1 index
     //val index = partdata.mapPartitions(x=> (List(x.next._1).iterator)).collect
@@ -159,7 +203,7 @@ object SimpleApp {
     */
     
     // )RDD[Array(Int)]
-    
+    /*
     level2.glom().collect().foreach(a => {a.foreach(println);println("=====")})
     
     // Clear everything before next example
@@ -222,7 +266,7 @@ object SimpleApp {
     level1.glom().collect().foreach(a => {a.foreach(println);println("=====")})
     println("Level 2 is: ")
     level2.glom().collect().foreach(a => {a.foreach(println);println("=====")})
-    
+    */
     spark.stop()
   }
 }
