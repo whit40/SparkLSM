@@ -14,14 +14,14 @@ object SimpleApp {
   val numPartitions = 2
   
   var level0 = scala.collection.mutable.ArrayBuffer.empty[Tuple2[Int,Int]]
+  //val levelArray = scala.collection.mutable.ArrayBuffer.empty[RDD[Tuple2[Int,Int]]]
   val levelArray = scala.collection.mutable.ArrayBuffer.empty[RDD[Tuple2[Int,Int]]]
   
   for (l <- 0 to levelCount){
     println("blah")
     levelArray += spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
-  
   }
-  var level1 = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
+  //var level1 = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
   var level2 = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
   
   //def partFilter(a:Tuple2(Int, Int)) : Int = {
@@ -34,17 +34,11 @@ object SimpleApp {
     // Insert value into memtable (level0)
     level0 += value
     
-    //val valueRDD = spark.sparkContext.parallelize(value)
-    // Union them and repartition
-    //level1 = level1 ++ valueRDD
-    //level1 = level1.sortByKey()
-    //val partitioner = new RangePartitioner(6, level1)
-    //level1 = level1.partitionBy(partitioner)
     // Check if we need to merge and merge if needed
     if (level0.length > maxSize){
       // Call merge
       println("call merge")
-      merge(0,1)
+      mergePacked(0,1)
     } else {
       println("no merge needed, size is: " + level0.length)
     }
@@ -99,6 +93,65 @@ object SimpleApp {
     return
   }
   
+  val levelArray2 = scala.collection.mutable.ArrayBuffer.empty[RDD[Array[Tuple2[Int,Int]]]]
+  
+  for (l <- 0 to levelCount){
+    println("blah")
+    levelArray2 += spark1.sparkContext.emptyRDD[Array[Tuple2[Int, Int]]]
+  }
+  
+  def mergePacked(levelId1: Int, levelId2: Int) : Unit = {
+    println("merging levels "+ levelId1 + " and "+ levelId2)
+  
+    // type for each level RDD should be: RDD[Array(Tuple2(Int,Int))]
+    // Convert memtable to RDD if necessary
+    var flatlevel1 = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
+    if (levelId1 == 0){
+      flatlevel1 = spark1.sparkContext.parallelize(level0)
+      // reset memtable
+      level0 = scala.collection.mutable.ArrayBuffer.empty[Tuple2[Int,Int]]
+    
+    } else {
+      flatlevel1 = levelArray2(levelId1).flatMap(array => array)
+    }
+    var flatlevel2 = levelArray2(levelId2).flatMap(array => array)
+  
+    // Flatmap and Merge levels with the parameter Ids
+    var flatUnion = flatlevel1 ++ flatlevel2
+    flatUnion = flatUnion.sortByKey()
+    levelArray2(levelId1) = spark1.sparkContext.emptyRDD[Array[Tuple2[Int, Int]]]
+    
+    // use tombstones to remove appropriate vals
+    flatUnion = flatUnion.reduceByKey(tomestoneCalc)
+    
+    flatUnion = flatUnion.filter(a => a._2 != -2)
+    flatUnion = flatUnion.sortByKey()
+    val flatSize = flatUnion.count
+    val partitioner1 = new RangePartitioner(numPartitions, flatUnion)
+    flatUnion = flatUnion.partitionBy(partitioner1)
+    
+    println("Going into packing we have: ")
+    flatUnion.glom().collect().foreach(a => {a.foreach(println);println("=====")})
+  
+    // repack new partition
+    
+    levelArray2(levelId2) = flatUnion.mapPartitions(iter => {
+      val array = iter.toArray
+      array.sorted
+      Iterator({array})
+      }
+    )
+    
+    
+    if (flatSize > (maxSize*levelId2*2)){
+      
+      if (levelId2 < levelCount){
+        mergePacked(levelId2, levelId2+1)
+      }
+    }
+    
+    return
+  }
   
   // Update function here
   def update(value: Tuple2[Int, Int]) : Boolean = {
@@ -111,7 +164,12 @@ object SimpleApp {
   
   // Search function here (~10 lines)
   def search(key: Int) : Seq[Int] = {
-    return level2.lookup(key)
+    // Find partition with partitionpruningRDD
+    
+    // 
+    
+    
+    return Seq[1] 
   } 
   
   
@@ -125,14 +183,14 @@ object SimpleApp {
     val numBs = logData.filter(line => line.contains("b")).count()
     println(s"Lines with a: $numAs, Lines with b: $numBs")
     
-    /* Simple int data 
-    val data = Seq(1,2,3,4,5,
-    6,7,8,9,10,
-    11,12,13,14,15,
-    16,17,18,19,20
-    )
+    /*
+    val exdata1 = Array((2,10),(1,10), (3,10),(4,20))
+    val exdata2 = Array((2,10),(1,10), (3,10),(5,20))
+    levelArray2(1) = spark.sparkContext.parallelize(Array(exdata1))
+    levelArray2(2) = spark.sparkContext.parallelize(Array(exdata2))
+    mergePacked(1,2)
     */
-    
+
     // start with 19 elements
     val data = Seq((2,10),(1,10), (3,10),(4,20),(5,10),
     (6,30),(7,50),(9,50),(10,30),
@@ -141,15 +199,17 @@ object SimpleApp {
     )
     
     //level1 = spark.sparkContext.parallelize(data)
-    val partitioner = new RangePartitioner(6, level1)
+    //val partitioner = new RangePartitioner(6, level1)
     
-    println("Partitioner has this many partitions: " + partitioner.numPartitions)
+    //println("Partitioner has this many partitions: " + partitioner.numPartitions)
     
-    println("Get partition with key 1: " + partitioner.getPartition(1))
-    
-    //level1 = level1.partitionBy(partitioner)
+    //println("Get partition with key 1: " + partitioner.getPartition(1))
     
     //level1.glom().collect().foreach(a => {a.foreach(println);println("=====")})
+    println("trying flatmap ============================")
+    val arrayofArrays = Array(Array(1,2,3,4), Array(5,6,7,8)) 
+    var exRDD = spark1.sparkContext.parallelize(arrayofArrays)
+    exRDD.flatMap(list => list).collect().foreach(println)
     
     val initPath = "/home/whit/spark-3.1.3-bin-hadoop3.2/simple_ex/src/main/initialstate.txt"
     println("printing input")
@@ -179,11 +239,12 @@ object SimpleApp {
     println("Level 0 (memtable) is: ")
     println(level0.mkString(" "))
     println("Level 1 is: ")
-    println(levelArray(1).glom().collect().foreach(a => {a.foreach(println);println("=====")}))
+    
+    println(levelArray2(1).glom().collect().foreach(a => {a.foreach(b => b.foreach(println));println("=====")}))
     println("Level 2 is: ")
-    println(levelArray(2).glom().collect().foreach(a => {a.foreach(println);println("=====")}))
+    println(levelArray2(2).glom().collect().foreach(a => {a.foreach(b => b.foreach(println));println("=====")}))
     println("Level 3 is: ")
-    println(levelArray(3).glom().collect().foreach(a => {a.foreach(println);println("=====")}))
+    println(levelArray2(3).glom().collect().foreach(a => {a.foreach(println);println("=====")}))
     
     //println("vals for 18 are: " +  level2.lookup(18))
     
@@ -203,16 +264,7 @@ object SimpleApp {
     println("Value " + searchNum + " should be in partition: " + partNum)
     */
     
-    /*
-    val index1 = partdata.mapPartitions(iter => {
-      val list = iter.toList
-      list.sorted
-      new Iterator({list})
-      }
-    )
-    */
-    
-    // )RDD[Array(Int)]
+
     /*
     level2.glom().collect().foreach(a => {a.foreach(println);println("=====")})
     
