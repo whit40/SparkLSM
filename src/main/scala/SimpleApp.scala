@@ -13,6 +13,7 @@ object SimpleApp {
   val levelCount = 3
   val numPartitions = 2
   
+
   var level0 = scala.collection.mutable.ArrayBuffer.empty[Tuple2[Int,Int]]
   //val levelArray = scala.collection.mutable.ArrayBuffer.empty[RDD[Tuple2[Int,Int]]]
   val levelArray = scala.collection.mutable.ArrayBuffer.empty[RDD[Tuple2[Int,Int]]]
@@ -60,44 +61,13 @@ object SimpleApp {
     }
   }
   
-  // Merge function here (~10 lines)
-  def merge(levelId1: Int, levelId2: Int) : Unit = {
-    println("merging levels "+ levelId1 + " and "+ levelId2)
-    // Convert memtable to RDD if necessary
-    if (levelId1 == 0){
-      levelArray(0) = spark1.sparkContext.parallelize(level0)
-      // reset memtable
-      level0 = scala.collection.mutable.ArrayBuffer.empty[Tuple2[Int,Int]]
-    }
-    
-    // Merge levels with the parameter Ids
-    levelArray(levelId2) = levelArray(levelId1) ++ levelArray(levelId2)
-    levelArray(levelId2) = levelArray(levelId2).sortByKey()
-    levelArray(levelId1) = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
-    
-    // use tombstones to remove appropriate vals
-    levelArray(levelId2) = levelArray(levelId2).reduceByKey(tomestoneCalc)
-    
-    levelArray(levelId2) = levelArray(levelId2).filter(a => a._2 != -2)
-    levelArray(levelId2) = levelArray(levelId2).sortByKey()
-    val partitioner1 = new RangePartitioner(numPartitions, levelArray(levelId2))
-    levelArray(levelId2) = levelArray(levelId2).partitionBy(partitioner1)
-    
-    if (levelArray(levelId2).count > (maxSize*levelId2*2)){
-      
-      if (levelId2 < levelCount){
-        merge(levelId2, levelId2+1)
-      }
-    }
-    
-    return
-  }
-  
   val levelArray2 = scala.collection.mutable.ArrayBuffer.empty[RDD[Array[Tuple2[Int,Int]]]]
+  val partArray = scala.collection.mutable.ArrayBuffer.empty[RangePartitioner[Int, Int]]
   
   for (l <- 0 to levelCount){
     println("blah")
     levelArray2 += spark1.sparkContext.emptyRDD[Array[Tuple2[Int, Int]]]
+    partArray += new RangePartitioner(numPartitions, spark1.sparkContext.emptyRDD[Tuple2[Int, Int]])
   }
   
   def mergePacked(levelId1: Int, levelId2: Int) : Unit = {
@@ -120,6 +90,7 @@ object SimpleApp {
     var flatUnion = flatlevel1 ++ flatlevel2
     flatUnion = flatUnion.sortByKey()
     levelArray2(levelId1) = spark1.sparkContext.emptyRDD[Array[Tuple2[Int, Int]]]
+    partArray(levelId1) = new RangePartitioner(numPartitions, spark1.sparkContext.emptyRDD[Tuple2[Int, Int]])
     
     // use tombstones to remove appropriate vals
     flatUnion = flatUnion.reduceByKey(tomestoneCalc)
@@ -127,8 +98,8 @@ object SimpleApp {
     flatUnion = flatUnion.filter(a => a._2 != -2)
     flatUnion = flatUnion.sortByKey()
     val flatSize = flatUnion.count
-    val partitioner1 = new RangePartitioner(numPartitions, flatUnion)
-    flatUnion = flatUnion.partitionBy(partitioner1)
+    partArray(levelId2) = new RangePartitioner(numPartitions, flatUnion)
+    flatUnion = flatUnion.partitionBy(partArray(levelId2))
     
     println("Going into packing we have: ")
     flatUnion.glom().collect().foreach(a => {a.foreach(println);println("=====")})
@@ -165,11 +136,17 @@ object SimpleApp {
   // Search function here (~10 lines)
   def search(key: Int) : Seq[Int] = {
     // Find partition with partitionpruningRDD
-    
+    //val partNum = 
     // 
+    println("trying level1: " + partArray(1).getPartition(24))
+    println("trying level2: " + partArray(2).getPartition(24))
+    println("trying level3: " + partArray(3).getPartition(24))
     
+    // use partitionpruningrdd to get partition
     
-    return Seq[1] 
+    // search just that partition for the key
+    
+    return Seq(1) 
   } 
   
   
@@ -246,7 +223,8 @@ object SimpleApp {
     println("Level 3 is: ")
     println(levelArray2(3).glom().collect().foreach(a => {a.foreach(println);println("=====")}))
     
-    //println("vals for 18 are: " +  level2.lookup(18))
+    search(24)
+    //println("partition for key 24 is: " +  )
     
     // Use mappartitions to build level 1 index
     //val index = partdata.mapPartitions(x=> (List(x.next._1).iterator)).collect
