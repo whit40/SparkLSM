@@ -88,7 +88,7 @@ object SimpleApp {
   
     // Flatmap and Merge levels with the parameter Ids
     var flatUnion = flatlevel1 ++ flatlevel2
-    flatUnion = flatUnion.sortByKey()
+    //flatUnion = flatUnion.sortByKey()
     levelArray2(levelId1) = spark1.sparkContext.emptyRDD[Array[Tuple2[Int, Int]]]
     partArray(levelId1) = new RangePartitioner(numPartitions, spark1.sparkContext.emptyRDD[Tuple2[Int, Int]])
     
@@ -96,7 +96,7 @@ object SimpleApp {
     flatUnion = flatUnion.reduceByKey(tomestoneCalc)
     
     flatUnion = flatUnion.filter(a => a._2 != -2)
-    flatUnion = flatUnion.sortByKey()
+    //flatUnion = flatUnion.sortByKey()
     val flatSize = flatUnion.count
     partArray(levelId2) = new RangePartitioner(numPartitions, flatUnion)
     flatUnion = flatUnion.partitionBy(partArray(levelId2))
@@ -107,8 +107,8 @@ object SimpleApp {
     // repack new partition
     
     levelArray2(levelId2) = flatUnion.mapPartitions(iter => {
-      val array = iter.toArray
-      array.sorted
+      var array = iter.toArray
+      array = array.sortBy(_._1)
       Iterator({array})
       }
     )
@@ -131,22 +131,67 @@ object SimpleApp {
     return true
   }
   
-  // Function to build index?
+  def binarySearch(array: Array[Tuple2[Int,Int]], target: Int) : Int = {
+    var lo = 0
+    var hi = array.length - 1
+    
+    while (lo <= hi){
+      var mid = ((hi - lo) / 2) + lo
+      
+      if (array(mid)._1 == target){
+        return array(mid)._2
+        
+      } else if (array(mid)._1 > target){
+        hi = mid - 1 
+        
+      } else {
+        lo = mid + 1
+      }
+    }
+    
+    return -1
+  }
   
   // Search function here (~10 lines)
   def search(key: Int) : Seq[Int] = {
-    // Find partition with partitionpruningRDD
-    //val partNum = 
-    // 
-    println("trying level1: " + partArray(1).getPartition(24))
-    println("trying level2: " + partArray(2).getPartition(24))
-    println("trying level3: " + partArray(3).getPartition(24))
+   
+    val partResults = scala.collection.mutable.ArrayBuffer.empty[Int]
+    val level0res = level0.find(_._1 == key)
+    if (level0res != None){
+      return Seq(level0res.get._2)
+    } else {
+      partResults += 0
+    }
+     
+    for (level <- 1 to levelCount) {
+      partResults += partArray(level).getPartition(key)
+    }
+    
+    partResults.foreach(println)
     
     // use partitionpruningrdd to get partition
+    for (level <- 1 to levelCount){
+      val prunedRDD = new PartitionPruningRDD(levelArray2(level), (part => {part == partResults(level)}))
+      //val prunedRDD = new PartitionPruningRDD(levelArray(level), id => pruneFunc(id,partResults(level)))
+      //val prunedRDD = new PartitionPruningRDD(levelArray2(level), id => true)
+      //val flatPruned = prunedRDD.flatMap(list => list)
+      println("partition results from level " + level  + " have size: " + prunedRDD.count())
+      //println(prunedRDD.collect())
+      println(prunedRDD.flatMap(list => list).collect.foreach(println))
+      
+      //val searchResult = prunedRDD.flatMap(list => list).collect.find(_._1 == key)
+      val searchResult = binarySearch(prunedRDD.flatMap(list => list).collect, key)
+      if (searchResult != -1){
+        //println("Find search gives us: " + searchResult.get._2)
+        println("binary search gives us " + binarySearch(prunedRDD.flatMap(list => list).collect, key))
+        return Seq(searchResult)
+      }
+      //flatPruned.collect().foreach(println)
+    }
     
     // search just that partition for the key
     
-    return Seq(1) 
+    return Seq(-1) 
   } 
   
   
@@ -223,7 +268,7 @@ object SimpleApp {
     println("Level 3 is: ")
     println(levelArray2(3).glom().collect().foreach(a => {a.foreach(println);println("=====")}))
     
-    search(24)
+    search(8)
     //println("partition for key 24 is: " +  )
     
     // Use mappartitions to build level 1 index
