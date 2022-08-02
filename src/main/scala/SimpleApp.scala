@@ -1,4 +1,4 @@
-/* SimpleApp.scala */
+/* lsmtree.scala */
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.RangePartitioner
 import org.apache.spark.rdd._
@@ -8,47 +8,71 @@ import scala.io.Source
 object SimpleApp {
   val spark1 = SparkSession.builder().getOrCreate()
   
-  // Parameters
+  // Begin modifiable LSM tree parameters:
+  
+  // maxSize: the maximum size (number of elements) of the level0 memtable. The size of the subsequent levels scales
+  // on a set factor. 
   val maxSize = 2
+  
+  // levelCount: number of levels in the LSM tree, NOT including level0/memtable. Must be >= 1.
   val levelCount = 3
+  
+  // numPartitions: number of partitions in the RDD for each level excluding level0/memtable.
   val numPartitions = 2
+  
+  // initialStatePath: path to the file containing the initial state of the LSM tree. See README for 
+  // instructions on the format of the file. 
+  val initialStatePath = "/home/whit/spark-3.1.3-bin-hadoop3.2/simple_ex/src/main/initialstate.txt"
+
+  // modFile: path to the file containing the modifications to be made to the LSM tree. 
+  val modFile = "/home/whit/spark-3.1.3-bin-hadoop3.2/simple_ex/src/main/initialstate.txt"
+  
+  // runExamples: enable/disable the running of the examples. 
+  val runExamples = true
+  
+  // End modifiable parameters. 
 
   var level0 = scala.collection.mutable.ArrayBuffer.empty[Tuple2[Int,Int]]
-  //val levelArray = scala.collection.mutable.ArrayBuffer.empty[RDD[Tuple2[Int,Int]]]
-  val levelArray = scala.collection.mutable.ArrayBuffer.empty[RDD[Tuple2[Int,Int]]]
+  val levelArray = scala.collection.mutable.ArrayBuffer.empty[RDD[Array[Tuple2[Int,Int]]]]
+  val rangeArray = scala.collection.mutable.ArrayBuffer.empty[scala.collection.mutable.ArrayBuffer[Tuple2[Int, Int]]]
   
   for (l <- 0 to levelCount){
-    println("blah")
-    levelArray += spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
+    levelArray += spark1.sparkContext.emptyRDD[Array[Tuple2[Int, Int]]]
+    rangeArray += scala.collection.mutable.ArrayBuffer.empty[Tuple2[Int,Int]]
   }
-  //var level1 = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
-  var level2 = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
   
-  // Insert/Delete function here (~5 lines)
-  def modifyLSM(value: Tuple2[Int, Int]) : Boolean = {
+  
+  /**
+   * Inserts or deletes a key-value pair in the LSM tree. A value of -1 represents a deletion. 
+   * The modification is inserted into the level0/memtable, and triggers (possibly cascading) merges if needed.
+   * Does not return anything. 
+   */
+  def modifyLSM(value: Tuple2[Int, Int]) : Unit = {
     val spark = SparkSession.builder().getOrCreate()
-    // Insert value into memtable (level0)
     level0 += value
     
     // Check if we need to merge and merge if needed
     if (level0.length > maxSize){
-      // Call merge
-      //println("call merge")
       mergePacked(0,1)
-    } else {
-      //println("no merge needed, size is: " + level0.length)
     }
-    return true
   }
   
+  
+  /**
+   * Utility function used in the merge process to determine the correct value for a key. 
+   * The reduction by key uses this function to mark keys to cancel, select new value in the case of
+   * update or upsert, or do nothing (for example, not removing a tombstone that hasn't reached a deeper level yet
+   * where it would take effect)
+   * Returns the appropriate value for the key at that point in the reduction. 
+   */ 
   def tomestoneCalc(v1: Int, v2:Int) : Int = {
     if (v1 == v2){
-      // 1 element in the RDD, dont remove it (not cancelling anything out)
+      // 1 element with the key in the RDD, don't remove it (not cancelling anything out yet)
       return v1
     }
     
     if (v1 == -1 || v2 == -1) {
-      // need to cancel out, return key removal code (-2)  
+      // need to cancel out, return key removal code (-2) to mark for deletion 
       return -2
     } else {
       // otherwise take most recent one
@@ -56,39 +80,30 @@ object SimpleApp {
     }
   }
   
-  val levelArray2 = scala.collection.mutable.ArrayBuffer.empty[RDD[Array[Tuple2[Int,Int]]]]
-  val partArray = scala.collection.mutable.ArrayBuffer.empty[RangePartitioner[Int, Int]]
-  val rangeArray = scala.collection.mutable.ArrayBuffer.empty[scala.collection.mutable.ArrayBuffer[Tuple2[Int, Int]]]
   
-  for (l <- 0 to levelCount){
-    levelArray2 += spark1.sparkContext.emptyRDD[Array[Tuple2[Int, Int]]]
-    partArray += new RangePartitioner(numPartitions, spark1.sparkContext.emptyRDD[Tuple2[Int, Int]])
-    rangeArray += scala.collection.mutable.ArrayBuffer.empty[Tuple2[Int,Int]]
-  }
-  
+  /**
+   * Performs a (possibly) cascading merge on the levels provided as parameters. Flattens each RDD, combines them,
+   * takes care of any tombstones or updates/upserts, and repackages the new RDD. May trigger another merge call
+   * if the new level is over the size limit. 
+   * Does not return anything. 
+   */
   def mergePacked(levelId1: Int, levelId2: Int) : Unit = {
-    println("merging levels "+ levelId1 + " and "+ levelId2)
   
     // type for each level RDD should be: RDD[Array(Tuple2(Int,Int))]
     // Convert memtable to RDD if necessary
     var flatlevel1 = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
     if (levelId1 == 0){
       flatlevel1 = spark1.sparkContext.parallelize(level0)
-      // reset memtable
       level0 = scala.collection.mutable.ArrayBuffer.empty[Tuple2[Int,Int]]
     
     } else {
-      flatlevel1 = levelArray2(levelId1).flatMap(array => array)
+      flatlevel1 = levelArray(levelId1).flatMap(array => array)
     }
-    var flatlevel2 = levelArray2(levelId2).flatMap(array => array)
+    var flatlevel2 = levelArray(levelId2).flatMap(array => array)
   
     // Flatmap and Merge levels with the parameter Ids
     var flatUnion = flatlevel1 ++ flatlevel2
-    levelArray2(levelId1) = spark1.sparkContext.emptyRDD[Array[Tuple2[Int, Int]]]
-    partArray(levelId1) = new RangePartitioner(numPartitions, spark1.sparkContext.emptyRDD[Tuple2[Int, Int]])
-    println("resetting level ranges for " + levelId1 + " and " + levelId2)
-    //rangeArray(levelId1) = scala.collection.mutable.ArrayBuffer.empty[Tuple2[Int,Int]]
-    //rangeArray(levelId2) = scala.collection.mutable.ArrayBuffer.empty[Tuple2[Int,Int]]
+    levelArray(levelId1) = spark1.sparkContext.emptyRDD[Array[Tuple2[Int, Int]]]
     rangeArray(levelId1).clear
     rangeArray(levelId2).clear
     
@@ -97,30 +112,24 @@ object SimpleApp {
     
     flatUnion = flatUnion.filter(a => a._2 != -2)
     val flatSize = flatUnion.count
-    partArray(levelId2) = new RangePartitioner(numPartitions, flatUnion)
-    flatUnion = flatUnion.partitionBy(partArray(levelId2))
-    
-    println("Going into packing we have: ")
-    flatUnion.glom().collect().foreach(a => {a.foreach(println);println("=====")})
+    flatUnion = flatUnion.partitionBy(new RangePartitioner(numPartitions, flatUnion))
   
     // repack new partition
     
-    levelArray2(levelId2) = flatUnion.mapPartitions(iter => {
+    levelArray(levelId2) = flatUnion.mapPartitions(iter => {
       var array = iter.toArray
       array = array.sortBy(_._1)
-      val firstKey = array(0)._1
-      val lastKey = array.last._1
-      val boundTuple = (firstKey, lastKey)
-      rangeArray(levelId2) += boundTuple
       Iterator({array})
       }
     )
-    println("array size before sort is " + rangeArray(levelId2).length)
-    rangeArray(levelId2) = rangeArray(levelId2).sortBy(_._1)
-    println("sort results in merge +++++++++++++==")
-    println("array size is " + rangeArray(levelId2).length)
-    rangeArray(levelId2).foreach(println)
-    println("end sort results in merge +++++++++++++==")
+    
+    rangeArray(levelId2) = levelArray(levelId2).mapPartitions(iter => {
+      var array = iter.toArray
+      val firstKey = array(0)(0)._1
+      val lastKey = array(0).last._1
+      Iterator((firstKey,lastKey))
+      }
+    ).collect().to[scala.collection.mutable.ArrayBuffer]
     
     if (flatSize > (maxSize*levelId2*2)){
       
@@ -128,18 +137,38 @@ object SimpleApp {
         mergePacked(levelId2, levelId2+1)
       }
     }
-    
-    return
   }
   
-  // Update function here
-  def update(value: Tuple2[Int, Int]) : Boolean = {
+  
+  /**
+   * Simple function that performs an update by inserting a deletion and subsequent insert into the tree.
+   * Does not return anything. 
+   */
+  def update(value: Tuple2[Int, Int]) : Unit = {
     modifyLSM((value._1, -1))
     modifyLSM(value)
-    return true
   }
   
-  // Simple binary search to search final pruned RDD/array
+  /**
+   * Wrapper function for performing inserts into the LSM tree
+   * Does not return anything.
+   */
+  def insert(key: Int, value: Int) : Unit = {
+    modifyLSM((key,value))
+  }
+  
+  /**
+   * Wrapper function for performing deletes on the LSM tree
+   * Does not return anything.
+   */
+  def delete(key: Int) : Unit = {
+    modifyLSM((key, -1))
+  }
+  
+  /**
+   * Simple iterative binary search to search final pruned RDD/array for the key
+   * Returns the result of the binary search on the array.
+   */
   def binarySearch(array: Array[Tuple2[Int,Int]], target: Int) : Int = {
     var lo = 0
     var hi = array.length - 1
@@ -157,13 +186,17 @@ object SimpleApp {
         lo = mid + 1
       }
     }
-    
     return -1
   }
   
-  // Binary search to find the correct partition in a search. Array Parameter is an Array of 2Tuples, where
-  // the first value is the first key of the partition, and the second value is the last key of the partition.
-  // Returns the partition number where the target would be.
+  
+  /**
+   * Binary search to find the correct partition of a level for a search. Array Parameter is an Array of 2Tuples, where
+   * the first value is the first key of the partition, and the second value is the last key of the 
+   * partition (partition boundaries).
+   * Returns the partition number where the target would be, with -1 representing the target is not 
+   * in any partition range on the level.
+   */
   def rangeBinarySearch(array: scala.collection.mutable.ArrayBuffer[Tuple2[Int,Int]], target: Int) : Int = {
     var lo = 0
     var hi = array.length - 1
@@ -187,97 +220,120 @@ object SimpleApp {
     return -1
   }
   
-  // Search function here (~10 lines)
-  def search(key: Int) : Seq[Int] = {
+  
+  /**
+   * Searches all levels of the LSM tree for the parameter key. Searches starting from level0, then level1, and so on.
+   * Returns the result of the search, or -1 representing the key isn't found/is marked as deleted.
+   */
+  def search(key: Int) : Int = {
    
     val partResults = scala.collection.mutable.ArrayBuffer.empty[Int]
-    val level0res = level0.find(_._1 == key)
-    if (level0res != None){
-      return Seq(level0res.get._2)
+    //val level0res = level0.find(_._1 == key)
+    val level0idx = level0.lastIndexWhere(_._1 == key)
+    if (level0idx != -1){
+      val level0res = level0(level0idx)
+      return level0res._2
     } else {
       partResults += 0
     }
-    println("L3 check")
-    println(rangeArray(3).length)
     
     for (level <- 1 to levelCount) {
-      partResults += partArray(level).getPartition(key)
-      println("doing level " + level + "=====================")
-      println("result from simple part search: "+ partArray(level).getPartition(key))
-      println("result from manual part search: "+ rangeBinarySearch(rangeArray(level), key))
-      println("+=+=+=+")
-      rangeArray(level).foreach(println)
+      partResults += rangeBinarySearch(rangeArray(level), key)
     }
-    
-    partResults.foreach(println)
     
     // use partitionpruningrdd to get partition
     for (level <- 1 to levelCount){
-      val prunedRDD = new PartitionPruningRDD(levelArray2(level), (part => {part == partResults(level)}))
       
-      println("partition results from level " + level  + " have size: " + prunedRDD.count())
-      //println(prunedRDD.collect())
-      println(prunedRDD.flatMap(list => list).collect.foreach(println))
+      if (partResults(level) != -1){
+        val prunedRDD = new PartitionPruningRDD(levelArray(level), (part => {part == partResults(level)}))
       
-      //val searchResult = prunedRDD.flatMap(list => list).collect.find(_._1 == key)
-      val searchResult = binarySearch(prunedRDD.flatMap(list => list).collect, key)
-      if (searchResult != -1){
-        //println("Find search gives us: " + searchResult.get._2)
-        println("binary search gives us " + binarySearch(prunedRDD.flatMap(list => list).collect, key))
-        return Seq(searchResult)
-      }
-      //flatPruned.collect().foreach(println)
+        val searchResult = binarySearch(prunedRDD.flatMap(list => list).collect, key)
+        if (searchResult != -1){
+          return searchResult
+        }
+      
+      } 
     }
-    
-    // search just that partition for the key
-    
-    return Seq(-1) 
+    return -1 
   } 
   
+  /**
+   * Prints all levels of the LSM tree in order. Partitions in each level are seperated by "======"
+   * Does not return anything.
+   */
+  def printAllLevels() : Unit = {
+    println("Level 0 (memtable) is: ")
+    println(level0.mkString(" "))
+    
+    for (level <- 1 to levelCount) {
+      println("Level " + level + " is: ")
+      println(levelArray(level).glom().collect().foreach(a => {a.foreach(b => b.foreach(println));println("=====")}))
+    }
+  }
   
   
-  def main(args: Array[String]) {
-    val logFile = "/home/whit/spark-3.2.1-bin-hadoop3.2-scala2.13/README.md"
-    val spark = SparkSession.builder.appName("Simple Application").getOrCreate()
-    spark.sparkContext.setLogLevel("ERROR")
-    val logData = spark.read.textFile(logFile).cache()
-    val numAs = logData.filter(line => line.contains("a")).count()
-    val numBs = logData.filter(line => line.contains("b")).count()
-    println(s"Lines with a: $numAs, Lines with b: $numBs")
-    
-    /*
-    val exdata1 = Array((2,10),(1,10), (3,10),(4,20))
-    val exdata2 = Array((2,10),(1,10), (3,10),(5,20))
-    levelArray2(1) = spark.sparkContext.parallelize(Array(exdata1))
-    levelArray2(2) = spark.sparkContext.parallelize(Array(exdata2))
-    mergePacked(1,2)
-    */
-
-    // start with 19 elements
-    val data = Seq((2,10),(1,10), (3,10),(4,20),(5,10),
-    (6,30),(7,50),(9,50),(10,30),
-    (11,10),(12,10),(13,40),(14,40),(15,40),
-    (16,40),(17,50),(18,10),(19,40),(20,40)
-    )
-    
-    //level1 = spark.sparkContext.parallelize(data)
-    //val partitioner = new RangePartitioner(6, level1)
-    
-    //println("Partitioner has this many partitions: " + partitioner.numPartitions)
-
-    //level1.glom().collect().foreach(a => {a.foreach(println);println("=====")})
-
-    
-    val initPath = "/home/whit/spark-3.1.3-bin-hadoop3.2/simple_ex/src/main/initialstate.txt"
-    //println("printing input")
-    for (line <- Source.fromFile(initPath).getLines){
+  /**
+   * Loads an initial state from file. 
+   * Does not return anything.
+   */
+  def loadInitialState() : Unit = {
+    for (line <- Source.fromFile(initialStatePath).getLines){
       val splitTuple = line.split(",")
       modifyLSM((splitTuple(0).toInt, splitTuple(1).toInt))
-      //println(line)
     }
+  }
+  
+  /**
+   * Runs a set of modifications from file. 
+   * Does not return anything.
+   */
+  def runModsFromFile() : Unit = {
+    for (line <- Source.fromFile(modFile).getLines){
+      val splitTuple = line.split(",")
+      modifyLSM((splitTuple(0).toInt, splitTuple(1).toInt))
+    }
+  }
+  
+  
+  /**
+   * Resets the LSM tree to a clean state. 
+   * Does not return anything.
+   */
+  def reset() : Unit = {
+    level0 = scala.collection.mutable.ArrayBuffer.empty[Tuple2[Int,Int]]
+  
+    for (level <- 1 to levelCount) {
+      levelArray(level) = spark1.sparkContext.emptyRDD[Array[Tuple2[Int, Int]]]
+      rangeArray(level) = scala.collection.mutable.ArrayBuffer.empty[Tuple2[Int,Int]]
+      
+    }
+  }
+  
+  def main(args: Array[String]) {
+    val spark = SparkSession.builder.appName("Simple Application").getOrCreate()
+    spark.sparkContext.setLogLevel("ERROR")
+
+
+    loadInitialState()
+
+    printAllLevels()
     
-    println("Try inserting into rdd")
-    /*
+    println("Search result for 8 is: "+ search(8))
+    
+    println("Search result for 60 is: "+ search(60))
+
+    reset()
+   
+    if (!runExamples){
+      spark.stop()
+      return
+    }
+   
+    // Example 1
+    println("Start Example 1 =================================")
+    
+    // Inserts, deletes, etc here. In this example we mostly just use modifyLSM directly. 
+    
     modifyLSM((8,20))
     modifyLSM((1,10))
     modifyLSM((2,30))
@@ -292,105 +348,49 @@ object SimpleApp {
     modifyLSM((20,20))
     modifyLSM((10,30))
     update((10, 20))
-    */
-    println("Level 0 (memtable) is: ")
-    println(level0.mkString(" "))
-    println("Level 1 is: ")
+    modifyLSM((2,-1))
+    modifyLSM((8,30))
     
-    println(levelArray2(1).glom().collect().foreach(a => {a.foreach(b => b.foreach(println));println("=====")}))
-    println("Level 2 is: ")
-    println(levelArray2(2).glom().collect().foreach(a => {a.foreach(b => b.foreach(println));println("=====")}))
-    println("Level 3 is: ")
-    println(levelArray2(3).glom().collect().foreach(a => {a.foreach(println);println("=====")}))
+    printAllLevels()
     
-    search(8)
-    //println("partition for key 24 is: " +  )
-    
-    //val exRanges = Array((1,7),(8,11),(14,20))
-    //println("partition search result is " + rangeBinarySearch(exRanges, 12))
-    
-    rangeArray(1).foreach(println)
-    // Use mappartitions to build level 1 index
-    //val index = partdata.mapPartitions(x=> (List(x.next._1).iterator)).collect
-    //index.foreach(println)
-    
-    // Use level 1 to get partition
-    /*
-    val searchNum :Int = 12
-    var partNum :Int = 0;
-    for (b <- index) {
-    	if (searchNum >= b){
-    		partNum = partNum + 1 
-    	}
-    }
-    println("Value " + searchNum + " should be in partition: " + partNum)
-    */
+    reset()
     
 
-    /*
-    level2.glom().collect().foreach(a => {a.foreach(println);println("=====")})
-    
-    // Clear everything before next example
-    level1 = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
-    level2 = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
-    
-    // Example 2
-    println("Start Example 2 =================================")
-    level1 = spark.sparkContext.parallelize(data)
-    //val partitioner = new RangePartitioner(6, level1)
-    level1 = level1.partitionBy(partitioner)
-    
-    // Inserts and deletes here
-    modifyLSM(Seq((9,-1)))
-    modifyLSM(Seq((10,-1)))
-    modifyLSM(Seq((1,-1)))
-    modifyLSM(Seq((11,-1)))
-    modifyLSM(Seq((12,-1)))
-    
-    println("Level 1 is: ")
-    level1.glom().collect().foreach(a => {a.foreach(println);println("=====")})
-    println("Level 2 is: ")
-    level2.glom().collect().foreach(a => {a.foreach(println);println("=====")})
-    
-    // Clear everything before next example
-    level1 = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
-    level2 = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
-    
     // Example 3
     println("Start Example 3 =================================")
-    level1 = spark.sparkContext.parallelize(data)
-    //val partitioner = new RangePartitioner(6, level1)
-    level1 = level1.partitionBy(partitioner)
     
-    // Inserts and deletes here
-    update(Seq((9,100)))
-    update(Seq((9,190)))
-    update(Seq((12,100)))
-    update(Seq((11,100)))
+    // Inserts, deletes, etc here. This is the same example, using the shortcut insert and delete functions.
     
-    println("Level 1 is: ")
-    level1.glom().collect().foreach(a => {a.foreach(println);println("=====")})
-    println("Level 2 is: ")
-    level2.glom().collect().foreach(a => {a.foreach(println);println("=====")})
+    insert(8,20)
+    insert(1,10)
+    insert(2,30)
+    insert(4,40)
+    insert(25,50)
+    insert(24,70)
+    insert(30,90)
+    delete(1)
+    delete(24)
+    delete(8)
+    delete(4)
+    insert(20,20)
+    insert(10,30)
+    update(10, 20)
+    delete(2)
+    insert(8,30)
+
     
-        // Clear everything before next example
-    level1 = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
-    level2 = spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
+    printAllLevels()
+    
+    reset()
     
     // Example 4
     println("Start Example 4 =================================")
-    level1 = spark.sparkContext.parallelize(data)
-    //val partitioner = new RangePartitioner(6, level1)
-    level1 = level1.partitionBy(partitioner)
-    
-    // Inserts and deletes here
 
     
-    println("Level 1 is: ")
-    level1.glom().collect().foreach(a => {a.foreach(println);println("=====")})
-    println("Level 2 is: ")
-    level2.glom().collect().foreach(a => {a.foreach(println);println("=====")})
-    */
+    // This space is for the user to define their own example(s)
+
+    reset()
+    
     spark.stop()
   }
 }
