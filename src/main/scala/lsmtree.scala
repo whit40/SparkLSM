@@ -5,7 +5,7 @@ import org.apache.spark.rdd._
 import org.apache.spark.SparkContext
 import scala.io.Source
 
-object SimpleApp {
+object lsmtree {
   val spark1 = SparkSession.builder().getOrCreate()
   
   // Begin modifiable LSM tree parameters:
@@ -22,10 +22,10 @@ object SimpleApp {
   
   // initialStatePath: path to the file containing the initial state of the LSM tree. See README for 
   // instructions on the format of the file. 
-  val initialStatePath = "/home/whit/spark-3.1.3-bin-hadoop3.2/simple_ex/src/main/initialstate.txt"
+  val initialStatePath = "/home/whit/spark-3.1.3-bin-hadoop3.2/lsmtree/src/main/initialstate.txt"
 
   // modFile: path to the file containing the modifications to be made to the LSM tree. 
-  val modFile = "/home/whit/spark-3.1.3-bin-hadoop3.2/simple_ex/src/main/initialstate.txt"
+  val modFile = "/home/whit/spark-3.1.3-bin-hadoop3.2/lsmtree/src/main/modfile.txt"
   
   // runExamples: enable/disable the running of the examples. 
   val runExamples = true
@@ -82,7 +82,7 @@ object SimpleApp {
   
   
   /**
-   * Performs a (possibly) cascading merge on the levels provided as parameters. Flattens each RDD, combines them,
+   * Performs a (possibly cascading) merge on the levels provided as parameters. Flattens each RDD, combines them,
    * takes care of any tombstones or updates/upserts, and repackages the new RDD. May trigger another merge call
    * if the new level is over the size limit. 
    * Does not return anything. 
@@ -310,11 +310,13 @@ object SimpleApp {
   }
   
   def main(args: Array[String]) {
-    val spark = SparkSession.builder.appName("Simple Application").getOrCreate()
+    val spark = SparkSession.builder.appName("LSM tree").getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
 
 
     loadInitialState()
+    
+    runModsFromFile()
 
     printAllLevels()
     
