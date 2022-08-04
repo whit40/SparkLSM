@@ -4,6 +4,7 @@ import org.apache.spark.RangePartitioner
 import org.apache.spark.rdd._
 import org.apache.spark.SparkContext
 import scala.io.Source
+import java.io._
 
 object lsmtree {
   val spark1 = SparkSession.builder().getOrCreate()
@@ -201,8 +202,6 @@ object lsmtree {
     var lo = 0
     var hi = array.length - 1
     
-    array.foreach(println)
-    
     while (lo <= hi){
       var mid = ((hi - lo) / 2) + lo
       
@@ -237,12 +236,9 @@ object lsmtree {
       partResults += 0
     }
     
-    for (level <- 1 to levelCount) {
-      partResults += rangeBinarySearch(rangeArray(level), key)
-    }
-    
     // use partitionpruningrdd to get partition
     for (level <- 1 to levelCount){
+      partResults += rangeBinarySearch(rangeArray(level), key)
       
       if (partResults(level) != -1){
         val prunedRDD = new PartitionPruningRDD(levelArray(level), (part => {part == partResults(level)}))
@@ -270,31 +266,46 @@ object lsmtree {
       println(levelArray(level).glom().collect().foreach(a => {a.foreach(b => b.foreach(println));println("=====")}))
     }
   }
-  
+
   
   /**
    * Loads an initial state from file. 
    * Does not return anything.
    */
-  def loadInitialState() : Unit = {
-    for (line <- Source.fromFile(initialStatePath).getLines){
-      val splitTuple = line.split(",")
-      modifyLSM((splitTuple(0).toInt, splitTuple(1).toInt))
+  def loadInitialStateBatch(path: String) : Unit = {
+    val start = System.nanoTime()
+    val buffer = Source.fromFile(path).getLines.toArray
+    
+    val end = System.nanoTime()
+    println("Loading ran in " + ((end-start)*0.000000001)+ "s")
+    for (element <- buffer){
+      val splitTuple = element.split(",")
+      val tuple = (splitTuple(0).toInt, splitTuple(1).toInt)
+      modifyLSM(tuple)
     }
   }
+
   
   /**
-   * Runs a set of modifications from file. 
+   * Loads an initial state from file. 
    * Does not return anything.
    */
-  def runModsFromFile() : Unit = {
-    for (line <- Source.fromFile(modFile).getLines){
-      val splitTuple = line.split(",")
-      modifyLSM((splitTuple(0).toInt, splitTuple(1).toInt))
+  def runModsFromFileBatch(path:String) : Unit = {
+   
+    val start = System.nanoTime()
+   
+    val buffer = Source.fromFile(path).getLines.toArray
+    
+    val end = System.nanoTime()
+    println("Loading ran in " + ((end-start)*0.000000001)+ "s")
+    
+    for (element <- buffer){
+      val splitTuple = element.split(",")
+      val tuple = (splitTuple(0).toInt, splitTuple(1).toInt)
+      modifyLSM(tuple)
     }
   }
-  
-  
+
   /**
    * Resets the LSM tree to a clean state. 
    * Does not return anything.
@@ -312,11 +323,28 @@ object lsmtree {
   def main(args: Array[String]) {
     val spark = SparkSession.builder.appName("LSM tree").getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
-
-
-    loadInitialState()
     
-    runModsFromFile()
+    // Code used to generate random files. User may uncomment this section to generate their own example files.
+    /*
+    val r = scala.util.Random
+    val file = new File("randnums.txt")
+    val bw = new PrintWriter(file)
+    for (i <- 1 to 1000) {
+      val temp = r.nextInt(200) + "," + r.nextInt(200) + "\n"
+      bw.write(r.nextInt(200) + "," + r.nextInt(200) + "\n")
+    }
+    bw.close()
+    */
+    
+    println("Start File Input Example 1 =================================")
+    var start = System.nanoTime()
+
+    loadInitialStateBatch(initialStatePath)
+    
+    runModsFromFileBatch(modFile)
+
+    var end = System.nanoTime()
+    println("Example ran in " + ((end-start)*0.000000001)+ "s")
 
     printAllLevels()
     
@@ -330,11 +358,44 @@ object lsmtree {
       spark.stop()
       return
     }
-   
+    
+    // The following two examples require the user to manually enters file paths, so they are commented out by default.
+    /*
+    println("Start File Input Example Medium =================================")
+    start = System.nanoTime()
+
+    loadInitialStateBatch("/home/whit/spark-3.1.3-bin-hadoop3.2/lsmtree/src/main/initialMedium.txt")
+    
+    runModsFromFileBatch("/home/whit/spark-3.1.3-bin-hadoop3.2/lsmtree/src/main/modMedium.txt")
+
+    end = System.nanoTime()
+    println("Example ran in " + ((end-start)*0.000000001)+ "s")
+
+    printAllLevels()
+
+    reset()
+    
+    println("Start File Input Example Large =================================")
+    start = System.nanoTime()
+
+    loadInitialStateBatch("/home/whit/spark-3.1.3-bin-hadoop3.2/lsmtree/src/main/initialMedium.txt")
+    
+    runModsFromFileBatch("/home/whit/spark-3.1.3-bin-hadoop3.2/lsmtree/src/main/modLarge.txt")
+
+    end = System.nanoTime()
+    println("Example ran in " + ((end-start)*0.000000001)+ "s")
+
+    printAllLevels()
+
+    reset()
+    */
+    
     // Example 1
-    println("Start Example 1 =================================")
+    println("Start Mainfile Example 2 =================================")
     
     // Inserts, deletes, etc here. In this example we mostly just use modifyLSM directly. 
+    
+    val start2 = System.nanoTime()
     
     modifyLSM((8,20))
     modifyLSM((1,10))
@@ -353,13 +414,16 @@ object lsmtree {
     modifyLSM((2,-1))
     modifyLSM((8,30))
     
+    val end2 = System.nanoTime()
+    println("Example 2 ran in " + ((end2-start2)*0.000000001)+ "s")
+    
     printAllLevels()
     
     reset()
     
 
     // Example 3
-    println("Start Example 3 =================================")
+    println("Start Mainfile Example 3 =================================")
     
     // Inserts, deletes, etc here. This is the same example, using the shortcut insert and delete functions.
     
@@ -386,10 +450,10 @@ object lsmtree {
     reset()
     
     // Example 4
-    println("Start Example 4 =================================")
+    println("Start Mainfile Example 4 =================================")
 
-    
     // This space is for the user to define their own example(s)
+
 
     reset()
     
