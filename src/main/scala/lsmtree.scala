@@ -36,6 +36,7 @@ object lsmtree {
   var level0 = scala.collection.mutable.ArrayBuffer.empty[Tuple2[Int,Int]]
   val levelArray = scala.collection.mutable.ArrayBuffer.empty[RDD[Array[Tuple2[Int,Int]]]]
   val rangeArray = scala.collection.mutable.ArrayBuffer.empty[scala.collection.mutable.ArrayBuffer[Tuple2[Int, Int]]]
+  var controlRDD =  spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
   
   for (l <- 0 to levelCount){
     levelArray += spark1.sparkContext.emptyRDD[Array[Tuple2[Int, Int]]]
@@ -251,6 +252,10 @@ object lsmtree {
       } 
     }
     return -1 
+  }
+  
+  def searchCtrl(key:Int): Seq[Int] = {
+    return controlRDD.lookup(key)
   } 
   
   /**
@@ -305,7 +310,64 @@ object lsmtree {
       modifyLSM(tuple)
     }
   }
+  
+  /**
+   * Loads an initial state from file. (control version)
+   * Does not return anything.
+   */
+  def runModsFromFileControl(path:String) : Unit = {
+   
+    val start = System.nanoTime()
+   
+    val buffer = Source.fromFile(path).getLines.toArray
+    
+    val end = System.nanoTime()
+    println("Loading ran in " + ((end-start)*0.000000001)+ "s")
+    
+    for (element <- buffer){
+      val splitTuple = element.split(",")
+      val tuple = (splitTuple(0).toInt, splitTuple(1).toInt)
+      val newrdd = spark1.sparkContext.parallelize(Seq(tuple))
+      controlRDD = controlRDD ++ newrdd
+      
+      controlRDD.sortByKey()
+      
+      controlRDD = controlRDD.reduceByKey(tomestoneCalc)
+    
+      controlRDD = controlRDD.filter(a => a._2 != -2)
+      controlRDD = controlRDD.partitionBy(new RangePartitioner(numPartitions, controlRDD))
+    }
+  }
 
+  /**
+   * Loads an initial state from file. (batched control version)
+   * Does not return anything.
+   */
+  def runModsFromFileControlBatch(path:String) : Unit = {
+   
+    val start = System.nanoTime()
+   
+    val buffer = Source.fromFile(path).getLines.toArray
+    
+    val end = System.nanoTime()
+    println("Loading ran in " + ((end-start)*0.000000001)+ "s")
+    
+    
+    for (element <- buffer){
+      val splitTuple = element.split(",")
+      val tuple = (splitTuple(0).toInt, splitTuple(1).toInt)
+      val newrdd = spark1.sparkContext.parallelize(Seq(tuple))
+      controlRDD = controlRDD ++ newrdd
+    }
+    controlRDD.sortByKey()
+      
+    controlRDD = controlRDD.reduceByKey(tomestoneCalc)
+    
+    controlRDD = controlRDD.filter(a => a._2 != -2)
+    controlRDD = controlRDD.partitionBy(new RangePartitioner(numPartitions, controlRDD))
+  }
+  
+  
   /**
    * Resets the LSM tree to a clean state. 
    * Does not return anything.
@@ -359,6 +421,147 @@ object lsmtree {
       return
     }
     
+    /*
+    // Baseline test case
+    println("Start File Input Example Control =================================")
+    start = System.nanoTime()
+    
+    runModsFromFileControl("/home/whit/spark-3.1.3-bin-hadoop3.2/lsmtree/src/main/modMedium.txt")
+
+    end = System.nanoTime()
+    println("Control Example ran in " + ((end-start)*0.000000001)+ "s")
+    
+    start = System.nanoTime()
+    
+    searchCtrl(60)
+    searchCtrl(100)
+    searchCtrl(30)
+    searchCtrl(24)
+    searchCtrl(50)
+    searchCtrl(60)
+    searchCtrl(100)
+    searchCtrl(30)
+    searchCtrl(24)
+    searchCtrl(50)
+    searchCtrl(60)
+    searchCtrl(100)
+    searchCtrl(30)
+    searchCtrl(24)
+    searchCtrl(50)
+    searchCtrl(60)
+    searchCtrl(100)
+    searchCtrl(30)
+    searchCtrl(24)
+    searchCtrl(50)
+    searchCtrl(60)
+    searchCtrl(100)
+    searchCtrl(30)
+    searchCtrl(24)
+    searchCtrl(50)
+    searchCtrl(60)
+    searchCtrl(100)
+    searchCtrl(30)
+    searchCtrl(24)
+    searchCtrl(50)
+    searchCtrl(60)
+    searchCtrl(100)
+    searchCtrl(30)
+    searchCtrl(24)
+    searchCtrl(50)
+    searchCtrl(60)
+    searchCtrl(100)
+    searchCtrl(30)
+    searchCtrl(24)
+    searchCtrl(50)
+    searchCtrl(60)
+    searchCtrl(100)
+    searchCtrl(30)
+    searchCtrl(24)
+    searchCtrl(50)
+    searchCtrl(60)
+    searchCtrl(100)
+    searchCtrl(30)
+    searchCtrl(24)
+    searchCtrl(50)
+    searchCtrl(60)
+    searchCtrl(100)
+    searchCtrl(30)
+    searchCtrl(24)
+
+    end = System.nanoTime()
+    println("Control Example, 50 Searches ran in " + ((end-start)*0.000000001)+ "s")
+    
+    controlRDD =  spark1.sparkContext.emptyRDD[Tuple2[Int, Int]]
+    
+    println("Start File Input Example Control (Batch) =================================")
+    start = System.nanoTime()
+    
+    runModsFromFileControlBatch("/home/whit/spark-3.1.3-bin-hadoop3.2/lsmtree/src/main/modMedium.txt")
+
+    end = System.nanoTime()
+    println("Control Example (Batch) ran in " + ((end-start)*0.000000001)+ "s")
+    
+    start = System.nanoTime()
+    
+    searchCtrl(60)
+    searchCtrl(100)
+    searchCtrl(30)
+    searchCtrl(24)
+    searchCtrl(50)
+    searchCtrl(60)
+    searchCtrl(100)
+    searchCtrl(30)
+    searchCtrl(24)
+    searchCtrl(50)
+    searchCtrl(60)
+    searchCtrl(100)
+    searchCtrl(30)
+    searchCtrl(24)
+    searchCtrl(50)
+    searchCtrl(60)
+    searchCtrl(100)
+    searchCtrl(30)
+    searchCtrl(24)
+    searchCtrl(50)
+    searchCtrl(60)
+    searchCtrl(100)
+    searchCtrl(30)
+    searchCtrl(24)
+    searchCtrl(50)
+    searchCtrl(60)
+    searchCtrl(100)
+    searchCtrl(30)
+    searchCtrl(24)
+    searchCtrl(50)
+    searchCtrl(60)
+    searchCtrl(100)
+    searchCtrl(30)
+    searchCtrl(24)
+    searchCtrl(50)
+    searchCtrl(60)
+    searchCtrl(100)
+    searchCtrl(30)
+    searchCtrl(24)
+    searchCtrl(50)
+    searchCtrl(60)
+    searchCtrl(100)
+    searchCtrl(30)
+    searchCtrl(24)
+    searchCtrl(50)
+    searchCtrl(60)
+    searchCtrl(100)
+    searchCtrl(30)
+    searchCtrl(24)
+    searchCtrl(50)
+    searchCtrl(60)
+
+    end = System.nanoTime()
+    println("Control Example, 50 Searches ran in " + ((end-start)*0.000000001)+ "s")  
+    
+    */
+    
+    reset()
+    
     // The following two examples require the user to manually enters file paths, so they are commented out by default.
     /*
     println("Start File Input Example Medium =================================")
@@ -372,7 +575,71 @@ object lsmtree {
     println("Example ran in " + ((end-start)*0.000000001)+ "s")
 
     printAllLevels()
-
+    
+    start = System.nanoTime()
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    end = System.nanoTime()
+    println("5 Searches ran in " + ((end-start)*0.000000001)+ "s")
+    
+    start = System.nanoTime()
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    end = System.nanoTime()
+    println("50 Searches ran in " + ((end-start)*0.000000001)+ "s")
+    
     reset()
     
     println("Start File Input Example Large =================================")
@@ -387,7 +654,121 @@ object lsmtree {
 
     printAllLevels()
 
+    start = System.nanoTime()
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    end = System.nanoTime()
+    println("5 Searches ran in " + ((end-start)*0.000000001)+ "s")
+    
+    start = System.nanoTime()
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    search(60)
+    search(100)
+    search(30)
+    search(24)
+    search(50)
+    end = System.nanoTime()
+    println("100 Searches ran in " + ((end-start)*0.000000001)+ "s")
+
     reset()
+    
     */
     
     // Example 1
